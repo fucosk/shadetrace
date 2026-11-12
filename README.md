@@ -88,6 +88,7 @@ The common open-source SCA tools find a library included in a different JAR.
 All the tools work only when `META-INF/maven/.../pom.properties` stays in the JAR file. The relocation will not worsen the detection. 
 When the metadata are removed, either synthetically (C3, C4) or in the real artifacts (Netty in grpc, snappy-java in hadoop), all fail. 
 There was no fale vulnerability finding, but all the tools are making up the groupId of the unknown JARs.
+This applies to OWASP Dependency-Check as well, even though it is the only tool that also collects evidence from the class package names. Unlike the other tools, it reported false vulnerability findings.
 
 ### Where the tools failed
 
@@ -95,6 +96,10 @@ There was no fale vulnerability finding, but all the tools are making up the gro
 - **C1 a C2 had been found by all tools correctly,** s menom, verziou aj CVE. Shade plugin v C2 `META-INF/maven` knižnice naozaj ponechal, takže samotná relokácia detekciu nezhorší. Rozhodujú len metadáta.
 - **grpc-netty-shaded 1.40.1:** includes Netty 4.1.52.Final without metadata. Version is detected from pom of not shaded `io.grpc:grpc-netty:1.40.1`. No tool found Netty (0 out of 14 components) and CVE-2021-21409 was not reported. The only finding from Trivy: outer JAR was identified by SHA1 and reported CVE-2025-55163 directly on `io.grpc:grpc-netty-shaded`. Syft, Grype and OSV gave it a bad group, and therefore found nothing.
 - **hadoop-client-runtime 3.3.1:** is leaving 84 `pom.properties`, so all the tools found all 84 components and 58 findings. However all of them overlook snappy-java 1.1.8.2, that was relocated without metadata (CVE-2023-34453). It is a real case C3. The version was detected from pom of `org.apache.hadoop:hadoop-project:3.3.1` and file `org/apache/hadoop/shaded/org/xerial/snappy/VERSION`.
+- **OWASP Dependency-Check** turned out the same as the other tools in C0–C4, grpc and hadoop. Even in C3 it did not recognize log4j by the relocated package `com.example.shaded.logging.log4j`. In addition:
+  - In C1 (no relocation) it built non-existent CPEs from the `org.apache.*` package names and the version 1.0.0 of the outer JAR: `apache:log4j:1.0.0` → CVE-2019-17571 and `apache:commons_net:1.0.0` → CVE-2021-37533. These are false findings. They disappeared in C2, because the relocation removed the `org.apache` names.
+  - In grpc it identified the outer JAR as `cpe:grpc:grpc:1.40.1` and reported CVE-2023-44487. It did not find Netty.
+  - In hadoop it reported 274 findings (66 distinct CVEs) compared to 58 by the other tools. 207 of them are on Jetty: it assigned 23 CVEs from the CPE `eclipse:jetty` to each of the 9 Jetty modules. Trivy and OSV-Scanner assigned 7 findings to the Jetty modules. These are not counted as false findings, because the modules realy are in the JAR, but most of the CVEs do not affect the particular module.
 - **False components identities:**
   - Trivy marked neutral `app-1.0.0.jar` as `io.zeebe.zeeqs:app` (it tracked it in Java DB by the name and version).
   - Syft, Grype and OSV are guessing groupId = artifactId.
@@ -111,7 +116,7 @@ There was no fale vulnerability finding, but all the tools are making up the gro
 | Grype 0.121.0 (SBOM from Syft) | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
 | Grype 0.121.0 (directly the file) | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
 | OSV-Scanner 2.7.0 | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
-| OWASP Dependency-Check | – | – | – | – | – | – | – | – |
+| OWASP Dependency-Check 13.0.0 | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
 
 ## Successes, Fails and False Identities
 
@@ -121,8 +126,8 @@ There was no fale vulnerability finding, but all the tools are making up the gro
 | Syft | C0–C2: both libraries with name and version. hadoop: 84 of 85. | C3, C4: nothing. grpc: Netty didn't find. hadoop: snappy-java didn't find. Does not search for vulnerabilities. | `app:app:1.0.0` (C1–C4), `grpc-netty-shaded:grpc-netty-shaded:1.40.1`, hadoop-client-runtime with group `org.apache.hadoop.thirdparty` | 1,3–1,9 s |
 | Grype (SBOM from Syftu) | C0–C2: libraries and expected CVE. hadoop: CVE-2020-36518, 58 findings. | C3, C4: nothing. grpc: no finding, nor CVE-2025-55163, before it got a bad group from Syft. hadoop: snappy-java didn't find. | The same as Syft, components gets from its SBOM | 3,3–3,8 s |
 | Grype (direct file) | The same as Grype on SBOM | The same as Grype on SBOM | The same as Syft, Syft runs inside Grype | 3,5–3,9 s |
-| OSV-Scanner | C0–C2: libraries and expected CVE. hadoop: 84 of 85, 58 findings. | C3, C4: nič. grpc: no finding, groupId of the outer JARu guessed incorrectly. hadoop: snappy-java didn't find. | `app:app:1.0.0` (C3–C4), `grpc-netty-shaded:grpc-netty-shaded:1.40.1` | 0,7–1,7 s, hadoop 14 s (calls online API) |
-| OWASP Dependency-Check | – | – | – | Not tested |
+| OSV-Scanner | C0–C2: libraries and expected CVE. hadoop: 84 of 85, 58 findings. | C3, C4: nothing. grpc: no finding, groupId of the outer JARu guessed incorrectly. hadoop: snappy-java didn't find. | `app:app:1.0.0` (C3–C4), `grpc-netty-shaded:grpc-netty-shaded:1.40.1` | 0,7–1,7 s, hadoop 14 s (calls online API) |
+| OWASP Dependency-Check | C0–C2: libraries and expected CVE. hadoop: 84 of 85, CVE-2020-36518. grpc: outer JAR identified as `cpe:grpc:grpc:1.40.1`, reported CVE-2023-44487. | C3, C4: nothing, not even by the relocated package names. grpc: Netty not found. hadoop: snappy-java not found. C1: false findings CVE-2019-17571 and CVE-2021-37533 on the application JAR. hadoop: 207 findings on Jetty (other tools 7). | `cpe:apache:log4j:1.0.0`, `cpe:apache:commons_net:1.0.0`, `cpe:apache:commons_lang:1.0.0` (C1) | 3,2–4,8 s, log4j-C3 34 s, hadoop 36 s; NVD database download beforehand 1 h 56 min |
 
 ### Experiment Setup
 
@@ -132,6 +137,7 @@ There was no fale vulnerability finding, but all the tools are making up the gro
 - Shade 3.6.0 didn't relocate 5 groups of log4j in `META-INF/versions/9`. No tool used that.
 - For the hadoop, the CVE is expected for jackson-databind CVE-2020-36518. Embedded commons-text 1.4 doeas not have CVE-2022-42889, for versions 1.5 to 1.9.
 - The vulnerabilities databases are downloaded before the scanning.
+- OWASP Dependency-Check ran on 2026-11-03, a day after the other tools. Downloading its NVD database with an NVD API key took 1 h 56 min.
 - No JAR was executed, all of them were scanned only in read-only mount.
 
 ### Detailed Results
@@ -142,31 +148,37 @@ There was no fale vulnerability finding, but all the tools are making up the gro
 | ctext-C0 | grype-sbom | commons-text:1.9 → name and version | CVE-2022-42889 | yes | 1/1 | 1 | 0 | 0 | 3.52 |
 | ctext-C0 | grype-file | commons-text:1.9 → name and version | CVE-2022-42889 | yes | 1/1 | 1 | 0 | 0 | 3.75 |
 | ctext-C0 | osv-scanner | commons-text:1.9 → name and version | CVE-2022-42889 | yes | 1/1 | 1 | 0 | 0 | 1.12 |
+| ctext-C0 | dependency-check | commons-text:1.9 → name and version | CVE-2022-42889 | yes | 1/1 | 1 | 0 | 0 | 3.77 |
 | ctext-C1 | trivy | commons-text:1.9 → name and version | CVE-2022-42889 | yes | 2/2 | 2 | 0 | io.zeebe.zeeqs:app:1.0.0 | 0.39 |
 | ctext-C1 | syft | commons-text:1.9 → name and version | CVE-2022-42889 | – | 2/2 | – | – | app:app:1.0.0 | 1.24 |
 | ctext-C1 | grype-sbom | commons-text:1.9 → name and version | CVE-2022-42889 | yes | 2/2 | 2 | 0 | app:app:1.0.0 | 3.61 |
 | ctext-C1 | grype-file | commons-text:1.9 → name and version | CVE-2022-42889 | yes | 2/2 | 2 | 0 | app:app:1.0.0 | 3.69 |
 | ctext-C1 | osv-scanner | commons-text:1.9 → name and version | CVE-2022-42889 | yes | 2/2 | 2 | 0 | 0 | 1.1 |
+| ctext-C1 | dependency-check | commons-text:1.9 → name and version | CVE-2022-42889 | yes | 2/2 | 3 | 1 | cpe:apache:commons_lang:1.0.0, cpe:apache:commons_net:1.0.0 | 3.91 |
 | ctext-C2 | trivy | commons-text:1.9 → name and version | CVE-2022-42889 | yes | 2/2 | 2 | 0 | io.zeebe.zeeqs:app:1.0.0 | 0.35 |
 | ctext-C2 | syft | commons-text:1.9 → name and version | CVE-2022-42889 | – | 2/2 | – | – | app:app:1.0.0 | 1.46 |
 | ctext-C2 | grype-sbom | commons-text:1.9 → name and version | CVE-2022-42889 | yes | 2/2 | 2 | 0 | app:app:1.0.0 | 3.61 |
 | ctext-C2 | grype-file | commons-text:1.9 → name and version | CVE-2022-42889 | yes | 2/2 | 2 | 0 | app:app:1.0.0 | 3.64 |
 | ctext-C2 | osv-scanner | commons-text:1.9 → name and version | CVE-2022-42889 | yes | 2/2 | 2 | 0 | 0 | 1.13 |
+| ctext-C2 | dependency-check | commons-text:1.9 → name and version | CVE-2022-42889 | yes | 2/2 | 2 | 0 | 0 | 4.05 |
 | ctext-C3 | trivy | commons-text:1.9 → no | CVE-2022-42889 | no | 0/2 | 0 | 0 | io.zeebe.zeeqs:app:1.0.0 | 0.67 |
 | ctext-C3 | syft | commons-text:1.9 → no | CVE-2022-42889 | – | 0/2 | – | – | app:app:1.0.0 | 1.25 |
 | ctext-C3 | grype-sbom | commons-text:1.9 → no | CVE-2022-42889 | no | 0/2 | 0 | 0 | app:app:1.0.0 | 3.62 |
 | ctext-C3 | grype-file | commons-text:1.9 → no | CVE-2022-42889 | no | 0/2 | 0 | 0 | app:app:1.0.0 | 3.61 |
 | ctext-C3 | osv-scanner | commons-text:1.9 → no | CVE-2022-42889 | no | 0/2 | 0 | 0 | app:app:1.0.0 | 0.77 |
+| ctext-C3 | dependency-check | commons-text:1.9 → no | CVE-2022-42889 | no | 0/2 | 0 | 0 | 0 | 3.57 |
 | ctext-C4 | trivy | commons-text:1.9 → no | CVE-2022-42889 | no | 0/2 | 0 | 0 | io.zeebe.zeeqs:app:1.0.0 | 0.7 |
 | ctext-C4 | syft | commons-text:1.9 → no | CVE-2022-42889 | – | 0/2 | – | – | app:app:1.0.0 | 1.26 |
 | ctext-C4 | grype-sbom | commons-text:1.9 → no | CVE-2022-42889 | no | 0/2 | 0 | 0 | app:app:1.0.0 | 3.69 |
 | ctext-C4 | grype-file | commons-text:1.9 → no | CVE-2022-42889 | no | 0/2 | 0 | 0 | app:app:1.0.0 | 3.75 |
 | ctext-C4 | osv-scanner | commons-text:1.9 → no | CVE-2022-42889 | no | 0/2 | 0 | 0 | app:app:1.0.0 | 0.74 |
+| ctext-C4 | dependency-check | commons-text:1.9 → no | CVE-2022-42889 | no | 0/2 | 0 | 0 | 0 | 3.24 |
 | grpc-real | trivy | netty-codec-http2:4.1.52.Final → no | CVE-2021-21409 | no | 0/14 | 1 | 0 | 0 | 0.66 |
 | grpc-real | syft | netty-codec-http2:4.1.52.Final → no | CVE-2021-21409 | – | 0/14 | – | – | grpc-netty-shaded:grpc-netty-shaded:1.40.1 | 1.5 |
 | grpc-real | grype-sbom | netty-codec-http2:4.1.52.Final → no | CVE-2021-21409 | no | 0/14 | 0 | 0 | grpc-netty-shaded:grpc-netty-shaded:1.40.1 | 3.59 |
 | grpc-real | grype-file | netty-codec-http2:4.1.52.Final → no | CVE-2021-21409 | no | 0/14 | 0 | 0 | grpc-netty-shaded:grpc-netty-shaded:1.40.1 | 3.71 |
 | grpc-real | osv-scanner | netty-codec-http2:4.1.52.Final → no | CVE-2021-21409 | no | 0/14 | 0 | 0 | grpc-netty-shaded:grpc-netty-shaded:1.40.1 | 0.79 |
+| grpc-real | dependency-check | netty-codec-http2:4.1.52.Final → no | CVE-2021-21409 | no | 0/14 | 1 | 0 | 0 | 4.83 |
 | hadoop-real | trivy | jackson-databind:2.10.5.1 → name and version | CVE-2020-36518 | yes | 84/85 | 58 | 0 | 0 | 0.47 |
 | hadoop-real | trivy | snappy-java:1.1.8.2 → no | CVE-2023-34453 | no | 84/85 | 58 | 0 | 0 | 0.47 |
 | hadoop-real | syft | jackson-databind:2.10.5.1 → name and version | CVE-2020-36518 | – | 84/85 | – | – | org.apache.hadoop.thirdparty:hadoop-client-runtime:3.3.1 | 1.84 |
@@ -177,31 +189,38 @@ There was no fale vulnerability finding, but all the tools are making up the gro
 | hadoop-real | grype-file | snappy-java:1.1.8.2 → no | CVE-2023-34453 | no | 84/85 | 58 | 0 | org.apache.hadoop.thirdparty:hadoop-client-runtime:3.3.1 | 4.16 |
 | hadoop-real | osv-scanner | jackson-databind:2.10.5.1 → name and version | CVE-2020-36518 | yes | 84/85 | 58 | 0 | 0 | 1.6 |
 | hadoop-real | osv-scanner | snappy-java:1.1.8.2 → no | CVE-2023-34453 | no | 84/85 | 58 | 0 | 0 | 1.6 |
+| hadoop-real | dependency-check | jackson-databind:2.10.5.1 → name and version | CVE-2020-36518 | yes | 84/85 | 274 | 0 | 0 | 36.3 |
+| hadoop-real | dependency-check | snappy-java:1.1.8.2 → no | CVE-2023-34453 | no | 84/85 | 274 | 0 | 0 | 36.3 |
 | log4j-C0 | trivy | log4j-core:2.14.1 → name and version | CVE-2021-44228 | yes | 1/1 | 8 | 0 | 0 | 0.4 |
 | log4j-C0 | syft | log4j-core:2.14.1 → name and version | CVE-2021-44228 | – | 1/1 | – | – | 0 | 1.29 |
 | log4j-C0 | grype-sbom | log4j-core:2.14.1 → name and version | CVE-2021-44228 | yes | 1/1 | 8 | 0 | 0 | 3.62 |
 | log4j-C0 | grype-file | log4j-core:2.14.1 → name and version | CVE-2021-44228 | yes | 1/1 | 8 | 0 | 0 | 3.62 |
 | log4j-C0 | osv-scanner | log4j-core:2.14.1 → name and version | CVE-2021-44228 | yes | 1/1 | 8 | 0 | 0 | 1.08 |
+| log4j-C0 | dependency-check | log4j-core:2.14.1 → name and version | CVE-2021-44228 | yes | 1/1 | 9 | 0 | 0 | 3.93 |
 | log4j-C1 | trivy | log4j-core:2.14.1 → name and version | CVE-2021-44228 | yes | 2/2 | 9 | 0 | io.zeebe.zeeqs:app:1.0.0 | 0.42 |
 | log4j-C1 | syft | log4j-core:2.14.1 → name and version | CVE-2021-44228 | – | 2/2 | – | – | app:app:1.0.0 | 1.52 |
 | log4j-C1 | grype-sbom | log4j-core:2.14.1 → name and version | CVE-2021-44228 | yes | 2/2 | 9 | 0 | app:app:1.0.0 | 3.61 |
 | log4j-C1 | grype-file | log4j-core:2.14.1 → name and version | CVE-2021-44228 | yes | 2/2 | 9 | 0 | app:app:1.0.0 | 3.76 |
 | log4j-C1 | osv-scanner | log4j-core:2.14.1 → name and version | CVE-2021-44228 | yes | 2/2 | 9 | 0 | 0 | 1.12 |
+| log4j-C1 | dependency-check | log4j-core:2.14.1 → name and version | CVE-2021-44228 | yes | 2/2 | 13 | 1 | cpe:apache:log4j:1.0.0 | 4.13 |
 | log4j-C2 | trivy | log4j-core:2.14.1 → name and version | CVE-2021-44228 | yes | 2/2 | 9 | 0 | io.zeebe.zeeqs:app:1.0.0 | 0.5 |
 | log4j-C2 | syft | log4j-core:2.14.1 → name and version | CVE-2021-44228 | – | 2/2 | – | – | app:app:1.0.0 | 1.29 |
 | log4j-C2 | grype-sbom | log4j-core:2.14.1 → name and version | CVE-2021-44228 | yes | 2/2 | 9 | 0 | app:app:1.0.0 | 3.64 |
 | log4j-C2 | grype-file | log4j-core:2.14.1 → name and version | CVE-2021-44228 | yes | 2/2 | 9 | 0 | app:app:1.0.0 | 3.63 |
 | log4j-C2 | osv-scanner | log4j-core:2.14.1 → name and version | CVE-2021-44228 | yes | 2/2 | 9 | 0 | 0 | 1.19 |
+| log4j-C2 | dependency-check | log4j-core:2.14.1 → name and version | CVE-2021-44228 | yes | 2/2 | 12 | 0 | 0 | 4.08 |
 | log4j-C3 | trivy | log4j-core:2.14.1 → no | CVE-2021-44228 | no | 0/2 | 0 | 0 | io.zeebe.zeeqs:app:1.0.0 | 0.69 |
 | log4j-C3 | syft | log4j-core:2.14.1 → no | CVE-2021-44228 | – | 0/2 | – | – | app:app:1.0.0 | 1.4 |
 | log4j-C3 | grype-sbom | log4j-core:2.14.1 → no | CVE-2021-44228 | no | 0/2 | 0 | 0 | app:app:1.0.0 | 3.91 |
 | log4j-C3 | grype-file | log4j-core:2.14.1 → no | CVE-2021-44228 | no | 0/2 | 0 | 0 | app:app:1.0.0 | 3.89 |
 | log4j-C3 | osv-scanner | log4j-core:2.14.1 → no | CVE-2021-44228 | no | 0/2 | 0 | 0 | app:app:1.0.0 | 0.79 |
+| log4j-C3 | dependency-check | log4j-core:2.14.1 → no | CVE-2021-44228 | no | 0/2 | 0 | 0 | 0 | 33.78 |
 | log4j-C4 | trivy | log4j-core:2.14.1 → no | CVE-2021-44228 | no | 0/2 | 0 | 0 | io.zeebe.zeeqs:app:1.0.0 | 0.73 |
 | log4j-C4 | syft | log4j-core:2.14.1 → no | CVE-2021-44228 | – | 0/2 | – | – | app:app:1.0.0 | 1.32 |
 | log4j-C4 | grype-sbom | log4j-core:2.14.1 → no | CVE-2021-44228 | no | 0/2 | 0 | 0 | app:app:1.0.0 | 3.64 |
 | log4j-C4 | grype-file | log4j-core:2.14.1 → no | CVE-2021-44228 | no | 0/2 | 0 | 0 | app:app:1.0.0 | 3.9 |
 | log4j-C4 | osv-scanner | log4j-core:2.14.1 → no | CVE-2021-44228 | no | 0/2 | 0 | 0 | app:app:1.0.0 | 0.72 |
+| log4j-C4 | dependency-check | log4j-core:2.14.1 → no | CVE-2021-44228 | no | 0/2 | 0 | 0 | 0 | 3.55 |
 
 #### Columns
 
@@ -212,6 +231,7 @@ There was no fale vulnerability finding, but all the tools are making up the gro
 - False components: identified components missing in the artifact.
 - Time: the whole `docker run` including the container start, databases pre-downloaded; OSV-Scanner calls online API.
 - Syft does not search for vulnerabilities (–). grype-sbom uses SBOM from Syftu, grype-file is scanning the file directly.
+- Dependency-Check: a finding without a Maven purl is assigned to its CPE (shown as `cpe:vendor:product:version`). Files it did not identify at all (the outer JAR, `.dll` files) are not counted as components.
 
 #### Environment
 
@@ -261,5 +281,6 @@ osv-scanner version: 2.7.0
 osv-scalibr version: 0.5.3
 commit: bfe2f84abd2f09fe0b83ba7f6dad40d296762f40
 built at: 2026-10-12T00:39:39Z
-osv-scanner db: online API osv.dev v čase behu (bez lokálnej databázy)
+osv-scanner db: online API osv.dev at run time (no local database)
+dependency-check: dependency-check-docker version 13.0.0 (NVD database downloaded 2026-11-03)
 ```
